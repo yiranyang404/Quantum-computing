@@ -1,10 +1,9 @@
 """Small-scale circuit-level surface-code threshold experiment.
 
-This reproduces the scientific phenomenon in Fowler et al. Fig. 4(a), using
-Stim's rotated surface-code memory circuit and PyMatching. It is not yet an
-exact historical reproduction: Fowler et al. use a specific eight-step planar
-surface-code circuit and report logical X errors per cycle. Every difference is
-documented in README.md.
+This studies the threshold phenomenon using Stim's rotated surface-code memory
+circuit and PyMatching. Fowler et al. instead use a specific eight-step planar
+circuit and count logical X errors per cycle; see README.md for the main
+differences.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ class Result:
     distance: int
     physical_error_rate: float
     rounds: int
+    seed: int
     shots: int
     failures: int
     logical_error_per_experiment: float
@@ -57,12 +57,13 @@ def sample_point(
     distance: int,
     p: float,
     rounds: int,
+    seed: int,
     batch_shots: int,
     min_failures: int,
     max_shots: int,
 ) -> Result:
     circuit = build_circuit(distance, rounds, p)
-    detector_sampler = circuit.compile_detector_sampler()
+    detector_sampler = circuit.compile_detector_sampler(seed=seed)
     detector_error_model = circuit.detector_error_model(decompose_errors=True)
     matching = pymatching.Matching.from_detector_error_model(detector_error_model)
 
@@ -85,6 +86,7 @@ def sample_point(
         distance=distance,
         physical_error_rate=p,
         rounds=rounds,
+        seed=seed,
         shots=shots,
         failures=failures,
         logical_error_per_experiment=experiment_rate,
@@ -93,7 +95,7 @@ def sample_point(
 
 
 def save_csv(results: list[Result], path: Path) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with path.open("x", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(Result.__annotations__))
         writer.writeheader()
         for result in results:
@@ -115,12 +117,25 @@ def plot_results(results: list[Result], path: Path) -> None:
         ax.loglog(x, y_for_plot, marker="o", label=f"d={distance}")
 
     ax.set_xlabel(r"Physical error probability $p$")
-    ax.set_ylabel(r"Estimated logical error rate per round $P_L$")
-    ax.set_title("Surface-code threshold reproduction (Stim + PyMatching)")
+    ax.set_ylabel("Estimated logical failure rate per round (parity model)")
+    ax.set_title("Rotated surface-code memory: logical-error scan")
     ax.grid(True, which="both", alpha=0.25)
     ax.legend()
     fig.tight_layout()
     fig.savefig(path, dpi=220)
+    plt.close(fig)
+
+
+def available_output_paths(output_dir: Path) -> tuple[Path, Path]:
+    """Keep earlier results by choosing a fresh pair of filenames."""
+    run_number = 1
+    while True:
+        suffix = "" if run_number == 1 else f"_run{run_number}"
+        csv_path = output_dir / f"threshold_results{suffix}.csv"
+        figure_path = output_dir / f"threshold_scan{suffix}.png"
+        if not csv_path.exists() and not figure_path.exists():
+            return csv_path, figure_path
+        run_number += 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,12 +152,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-shots", type=int, default=10_000)
     parser.add_argument("--min-failures", type=int, default=200)
     parser.add_argument("--max-shots", type=int, default=1_000_000)
+    parser.add_argument("--seed", type=int, default=12345,
+                        help="Base Stim seed; each (distance, p) point gets the next seed.")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    if args.seed < 0 or args.seed + len(args.distances) * len(args.error_rates) > 2**64:
+        raise ValueError("The seed for every point must be in [0, 2**64).")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     results: list[Result] = []
 
     for distance in args.distances:
@@ -152,6 +172,7 @@ def main() -> None:
                 distance=distance,
                 p=p,
                 rounds=rounds,
+                seed=args.seed + len(results),
                 batch_shots=args.batch_shots,
                 min_failures=args.min_failures,
                 max_shots=args.max_shots,
@@ -163,8 +184,7 @@ def main() -> None:
                 f"P_L/round={result.logical_error_per_round:.3e}"
             )
 
-    csv_path = OUTPUT_DIR / "threshold_results.csv"
-    figure_path = OUTPUT_DIR / "threshold_crossing.png"
+    csv_path, figure_path = available_output_paths(args.output_dir)
     save_csv(results, csv_path)
     plot_results(results, figure_path)
     print(f"Saved {csv_path}")
@@ -173,4 +193,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

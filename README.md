@@ -1,81 +1,93 @@
-# Surface-code Fig. 4 reproduction
+# Surface-code Fig. 4 study
 
-In this project, I reproduce selected features of Fig. 4 in Fowler et al.,
-*Surface codes: Towards practical large-scale quantum computation*
-(arXiv:1208.0928v2).
+In this project, I study Fig. 4 in Fowler et al., *Surface codes: Towards
+practical large-scale quantum computation* (arXiv:1208.0928v2). I generate a
+statistical estimate related to panel (b) and run a modern circuit-level
+surface-code memory experiment related to the threshold behavior in panel (a).
 
-## What is included
+## What the two scripts calculate
 
-1. In `panel_b_model.py`, I reproduce the qualitative curves in panel (b) from
-   the paper's empirical Eq. (11).
-2. In `reproduce_threshold.py`, I run a circuit-level Monte Carlo experiment
-   with Stim and decode the detection events with PyMatching's minimum-weight
-   perfect matching decoder.
+In `panel_b_model.py`, I plot the paper's data-error-only statistical estimate
+from Eq. (12) for distances 3, 7, 11, 25, and 55:
 
-## Important scientific limitation
+```text
+P_L = d * binomial(d, (d + 1) / 2) * (8p)^((d + 1) / 2)
+```
 
-I use the Monte Carlo script as a **modern reproduction of the threshold
-phenomenon**, not as an exact historical reproduction of panel (a). My current
-implementation uses Stim's rotated surface-code memory circuit, whereas the
-paper used its own planar surface-code layout, an eight-step
-syndrome-extraction schedule, and the five error channels listed immediately
-before Fig. 4. I therefore do not claim that the crossing point produced here
-exactly reproduces the paper's reported `p_th = 0.57%`.
+Here `p` is the per-step physical error probability and `8p` approximates the
+per-cycle data error probability. This estimate does not include all the
+circuit faults used in panel (a). The older
+`outputs/fig4b_statistical_model.png` uses the empirical Eq. (11), which fixes
+`p_th = 0.57%` and therefore forces its curves to meet there. I retain that
+older image for comparison; the current script produces
+`outputs/fig4b_eq12_estimate.png`.
 
-As my next research step, I plan to encode the paper's exact circuit schedule
-and noise model, then compare its detector error model and logical-error
-counting convention with this modern baseline.
+In `reproduce_threshold.py`, I sample Stim's `surface_code:rotated_memory_x`
+circuit and decode with PyMatching. I use this as a modern baseline. Fowler et
+al. instead used their planar layout, the eight-step syndrome-extraction
+schedule in Fig. 1, and the five error channels described before Fig. 4. The
+paper counts logical X errors per complete cycle. My CSV records the fraction
+of memory experiments decoded incorrectly and a derived per-round estimate.
+For `r` rounds, I calculate the latter as
+`[1 - (1 - 2 * P_experiment)^(1/r)] / 2`. This conversion assumes independent,
+identical logical flips per round and is not the paper's counting convention.
+Consequently, I do not identify any crossing of my curves with the paper's
+reported `p_th = 0.57%`.
 
-## Setup on Windows PowerShell
+## Set up and run on Windows PowerShell
 
-I use Python 3.11 or 3.12 and create the virtual environment with:
+I tested this project with Python 3.13.12, NumPy 2.5.3, Matplotlib 3.11.2,
+Stim 1.16.0, and PyMatching 2.4.0. I pin these tested direct dependencies in
+`requirements.txt`; changing versions can give different Monte Carlo samples.
+From this project directory, I create the environment and install dependencies
+with:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-If PowerShell blocks activation, I call the environment directly:
-
-```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-## Run the statistical model first
+I then generate the statistical estimate and run the small threshold scan:
 
 ```powershell
-python panel_b_model.py
+.\.venv\Scripts\python.exe panel_b_model.py
+.\.venv\Scripts\python.exe reproduce_threshold.py --distances 3 5 --error-rates 0.003 0.006 0.01 --min-failures 20 --max-shots 50000
 ```
 
-Output: `outputs/fig4b_statistical_model.png`
-
-## Run a fast smoke test
+For a larger initial scan, I run:
 
 ```powershell
-python reproduce_threshold.py --distances 3 5 --error-rates 0.003 0.006 0.01 --min-failures 20 --max-shots 50000
+.\.venv\Scripts\python.exe reproduce_threshold.py
 ```
 
-## Run the initial experiment
+The Monte Carlo script uses base seed `12345` by default and assigns the next
+seed to each `(distance, p)` point. I can change it with `--seed` and select an
+output directory with `--output-dir`. The CSV records the seed used for each
+point. A fixed seed makes repeated runs comparable with the same Stim version,
+machine, batch size, and sampling calls; it does not guarantee identical
+samples across different versions or machines.
 
-```powershell
-python reproduce_threshold.py
-```
+New runs create `outputs/threshold_results.csv` and
+`outputs/threshold_scan.png` if these names are free. Otherwise they use the
+next available `_run2`, `_run3`, and so on suffix, preserving earlier data and
+images. The original six-point run remains in
+`outputs/threshold_results.csv` and `outputs/threshold_crossing.png`; the
+second filename is historical and does not imply an observed crossing.
 
-Outputs:
+## Interpreting the threshold scan
 
-- `outputs/threshold_results.csv`
-- `outputs/threshold_crossing.png`
+The horizontal axis is the physical error probability `p` passed to Stim's
+noise parameters. The vertical axis is the derived logical failure estimate
+per syndrome round. Each distance `d` has its own curve. In the original
+six-point CSV, the d=5 estimate is lower than d=3 at all three sampled error
+rates (0.003, 0.006, and 0.01). I therefore have **not observed a threshold
+crossing** in that small test. A credible threshold estimate needs more
+distances, denser sampling near a crossing, and uncertainty estimates.
 
 At low error rates and high distances, I may observe zero failures before the
-default shot limit. I treat such a point as statistically unresolved and omit
-it from the log-scale plot instead of presenting it as a true zero error rate.
+shot limit. I treat such a point as statistically unresolved and omit it from
+the log-scale plot instead of presenting it as a true zero error rate.
 
-## How the experiment maps to Fig. 4
-
-- I use the physical error probability `p` on the horizontal axis.
-- I plot the estimated logical failure probability per syndrome round on the
-  vertical axis.
-- I draw one curve for each code distance `d`.
-- I use a common crossing region to estimate the threshold.
-- Below threshold, I expect increasing `d` to suppress the logical error rate.
+My next research step is to implement the paper's exact layout, eight-step
+circuit, and noise channels, then align the detector model and per-cycle
+logical X error count with its Fig. 4(a) simulation.
